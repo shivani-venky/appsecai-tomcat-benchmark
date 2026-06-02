@@ -183,7 +183,26 @@ def build_sarif(cve_data: dict, start_line: int, end_line: int) -> dict:
 
 
 def main(fixes_dir: Path, sarif_dir: Path, tomcat_dir: Path) -> None:
-    raise NotImplementedError
+    sarif_dir.mkdir(parents=True, exist_ok=True)
+
+    for md_path in sorted(fixes_dir.glob("CVE-*.md")):
+        cve_data = parse_markdown(md_path)
+        cve_id = cve_data["cve_id"]
+
+        src_file = tomcat_dir / cve_data["before_file_path"]
+        start_line = find_declaration_line(src_file, cve_data["grep_term"], cve_data["is_class"])
+
+        if start_line is None:
+            print(f"WARN: {cve_data['grep_term']!r} not found in {src_file}, using startLine=1")
+            start_line = 1
+
+        end_line = start_line + len(cve_data["before_lines"]) - 1
+
+        sarif = build_sarif(cve_data, start_line, end_line)
+
+        out_path = sarif_dir / f"{cve_id}.sarif"
+        out_path.write_text(json.dumps(sarif, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"Wrote {out_path}")
 
 
 if __name__ == "__main__":
