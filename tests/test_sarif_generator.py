@@ -45,3 +45,27 @@ def test_parse_markdown_low_severity():
     assert data["d1_score"] == 3
     assert data["grep_term"] == "parseChunkHeader"
     assert data["is_class"] is False
+
+
+def test_find_declaration_line_method():
+    src = Path("tomcat/java/org/apache/catalina/authenticator/FormAuthenticator.java")
+    assert find_declaration_line(src, "savedRequestURL", is_class=False) == 755
+
+
+def test_find_declaration_line_method_chunked():
+    src = Path("tomcat/java/org/apache/coyote/http11/filters/ChunkedInputFilter.java")
+    assert find_declaration_line(src, "parseChunkHeader", is_class=False) == 365
+
+
+def test_find_declaration_line_class():
+    src = Path("tomcat/java/org/apache/catalina/valves/AbstractAccessLogValve.java")
+    assert find_declaration_line(src, "RequestElement", is_class=True) == 1343
+
+
+def test_find_declaration_line_missing():
+    src = Path("tomcat/java/org/apache/catalina/authenticator/FormAuthenticator.java")
+    assert find_declaration_line(src, "nonexistentMethod", is_class=False) is None
+
+
+def test_find_declaration_line_file_missing():
+    assert find_declaration_line(Path("tomcat/java/does/not/Exist.java"), "foo", is_class=False) is None

@@ -98,7 +98,19 @@ def parse_markdown(path: Path) -> dict:
 
 
 def find_declaration_line(src_file: Path, grep_term: str, is_class: bool) -> int | None:
-    raise NotImplementedError
+    if not src_file.exists():
+        return None
+
+    if is_class:
+        pattern = re.compile(rf'\bclass\s+{re.escape(grep_term)}\b')
+    else:
+        pattern = re.compile(rf'\b(?:private|protected|public)\b.*\b{re.escape(grep_term)}\b')
+
+    with open(src_file, encoding="utf-8") as f:
+        for lineno, line in enumerate(f, start=1):
+            if pattern.search(line):
+                return lineno
+    return None
 
 
 def build_sarif(cve_data: dict, start_line: int, end_line: int) -> dict:
