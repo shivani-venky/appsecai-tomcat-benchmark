@@ -1,7 +1,8 @@
 import json
+import re
 from pathlib import Path
 import pytest
-from sarif_generator import parse_markdown, find_declaration_line, build_sarif, main
+from sarif_generator import parse_markdown, find_declaration_line, build_sarif, main, _clean_before_lines
 
 # All tests must run from workspace root: /Users/shivani/appsecai-internship/
 # Run with: pytest tests/ -v
@@ -218,3 +219,108 @@ def test_main_creates_sarif_dir_if_missing(tmp_path):
     main(fixes_dir=Path("fixes"), sarif_dir=sarif_dir, tomcat_dir=Path("tomcat"))
     assert sarif_dir.exists()
     assert len(list(sarif_dir.glob("CVE-*.sarif"))) == 3
+
+
+# --- _clean_before_lines unit tests ---
+
+def test_clean_before_lines_strips_arrow_annotation():
+    lines = [
+        "    buf.append(request.getRequestURI());          // ← unescaped",
+        "    buf.append(request.getMethod());",
+    ]
+    result = _clean_before_lines(lines, is_class=False)
+    assert "←" not in "\n".join(result)
+    assert "buf.append(request.getRequestURI());" in result[0]
+
+
+def test_clean_before_lines_removes_truncation_marker():
+    lines = [
+        "    some code",
+        "    // ... remainder unchanged",
+        "    more code",
+    ]
+    result = _clean_before_lines(lines, is_class=False)
+    assert len(result) == 2
+    for line in result:
+        assert not re.match(r"\s*//\s*\.\.\.", line)
+
+
+def test_clean_before_lines_trims_to_first_brace_block():
+    lines = [
+        "/** Javadoc */",
+        "class RequestElement implements X {",
+        "    void foo() {}",
+        "}",
+        "",
+        "/** Second */",
+        "class RequestURIElement implements X {",
+        "    void bar() {}",
+        "}",
+    ]
+    result = _clean_before_lines(lines, is_class=True)
+    assert len(result) == 4
+    assert "RequestURIElement" not in "\n".join(result)
+
+
+def test_clean_before_lines_no_trim_when_not_class():
+    lines = ["line1 {", "line2", "}", "line3 {", "}"]
+    result = _clean_before_lines(lines, is_class=False)
+    assert len(result) == 5
+
+
+def test_clean_before_lines_brace_mismatch_fallback():
+    lines = ["class Foo {", "    code", "// no closing brace"]
+    result = _clean_before_lines(lines, is_class=True)
+    assert result == lines
+
+
+# --- parse_markdown integration tests ---
+
+def test_parse_markdown_no_request_uri_element_in_snippet():
+    data = parse_markdown(Path("fixes/CVE-2026-34483_before_after.md"))
+    assert "RequestURIElement" not in "\n".join(data["before_lines"])
+
+
+def test_parse_markdown_no_annotations_in_before_lines():
+    for md in [
+        "CVE-2023-41080_before_after.md",
+        "CVE-2026-24880_before_after.md",
+        "CVE-2026-34483_before_after.md",
+    ]:
+        data = parse_markdown(Path(f"fixes/{md}"))
+        joined = "\n".join(data["before_lines"])
+        assert "←" not in joined, f"{md}: found ← in before_lines"
+        for line in data["before_lines"]:
+            assert not re.match(r"\s*//\s*\.\.\.", line), f"{md}: found truncation marker"
+
+
+def test_parse_markdown_fix_commits_single():
+    data = parse_markdown(Path("fixes/CVE-2023-41080_before_after.md"))
+    assert data["fix_commits"] == ["e3703c9a"]
+
+
+def test_parse_markdown_fix_commits_multiple():
+    data = parse_markdown(Path("fixes/CVE-2026-24880_before_after.md"))
+    assert data["fix_commits"] == ["fde1a823", "2cb06c34"]
+
+
+# --- build_sarif fix_commits tests ---
+
+def test_build_sarif_fix_commits_present():
+    cve = {**_MODERATE_CVE, "fix_commits": ["abc1234"]}
+    sarif = build_sarif(cve, start_line=755, end_line=757)
+    props = sarif["runs"][0]["results"][0]["properties"]
+    assert props["fix_commits"] == ["abc1234"]
+
+
+def test_build_sarif_fix_commits_omitted_when_empty():
+    cve = {**_MODERATE_CVE, "fix_commits": []}
+    sarif = build_sarif(cve, start_line=755, end_line=757)
+    props = sarif["runs"][0]["results"][0]["properties"]
+    assert "fix_commits" not in props
+
+
+def test_build_sarif_fix_commits_omitted_when_absent():
+    sarif = build_sarif(_MODERATE_CVE, start_line=755, end_line=757)
+    props = sarif["runs"][0]["results"][0]["properties"]
+    assert "fix_commits" not in props

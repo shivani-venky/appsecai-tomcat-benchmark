@@ -24,6 +24,30 @@ def _parse_affected_component(raw: str) -> dict:
         return {"grep_term": first, "is_class": False, "all_methods": all_methods}
 
 
+def _clean_before_lines(lines: list[str], is_class: bool) -> list[str]:
+    if is_class:
+        trimmed = []
+        depth = 0
+        found_open = False
+        for line in lines:
+            trimmed.append(line)
+            depth += line.count('{') - line.count('}')
+            if depth > 0:
+                found_open = True
+            if found_open and depth == 0:
+                break
+        lines = trimmed if found_open else lines
+
+    result = []
+    for line in lines:
+        if re.match(r'\s*//\s*\.\.\.', line):
+            continue
+        if '←' in line:
+            line = re.sub(r'\s*//.*←.*$', '', line).rstrip()
+        result.append(line)
+    return result
+
+
 def parse_markdown(path: Path) -> dict:
     data = {}
     state = "SCANNING_TABLE"
@@ -54,6 +78,8 @@ def parse_markdown(path: Path) -> dict:
                         data["d1_score"] = int(d1_m.group(1)) if d1_m else 0
                     elif field == "Affected Component":
                         data.update(_parse_affected_component(value))
+                    elif field in ("Fix Commit", "Fix Commit(s)"):
+                        data["fix_commits"] = re.findall(r'`([0-9a-f]+)`', value)
                 elif line.startswith("## Before"):
                     state = "SCANNING_BEFORE"
 
@@ -85,10 +111,11 @@ def parse_markdown(path: Path) -> dict:
     if not done:
         raise ValueError(f"{path.name}: did not reach end of After code block")
 
-    data["before_lines"] = before_lines
+    data["before_lines"] = _clean_before_lines(before_lines, data.get("is_class", False))
     data["before_file_path"] = before_file_path
     paths = {p for p in [before_file_path, after_file_path] if p}
     data["files_touched"] = len(paths)
+    data.setdefault("fix_commits", [])
 
     for key in ["cve_id", "cwe_id", "severity", "d1_score"]:
         if key not in data:
@@ -174,6 +201,7 @@ def build_sarif(cve_data: dict, start_line: int, end_line: int) -> dict:
                             "cve": cve_id,
                             "patch_complexity_score": cve_data["d1_score"],
                             "files_touched": cve_data["files_touched"],
+                            **( {"fix_commits": cve_data["fix_commits"]} if cve_data.get("fix_commits") else {} ),
                         },
                     }
                 ],
