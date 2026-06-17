@@ -1,0 +1,26 @@
+name: AppSecAI Security Analysis
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    env:
+      PROCESSING_MODE: group_cc
+      AUTO_CREATE_PRS: 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: AppSecAI Vulnerability Analysis
+        uses: AppSecureAI/automation-action@v1
+        with:
+          files: |
+            sarif/*.sarif
